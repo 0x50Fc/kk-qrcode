@@ -1,25 +1,17 @@
 package cn.kkmofang.qrcode;
 import android.app.Activity;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.HandlerThread;
-import android.os.Looper;
-import android.os.Message;
+import android.hardware.Camera;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Toast;
 
-import com.google.zxing.BinaryBitmap;
-import com.google.zxing.MultiFormatReader;
-import com.google.zxing.PlanarYUVLuminanceSource;
-import com.google.zxing.ReaderException;
-import com.google.zxing.Result;
-import com.google.zxing.client.android.camera.CameraManager;
-import com.google.zxing.common.HybridBinarizer;
-import com.google.zxing.qrcode.QRCodeReader;
+import net.sourceforge.zbar.Config;
+import net.sourceforge.zbar.Image;
+import net.sourceforge.zbar.ImageScanner;
+import net.sourceforge.zbar.Symbol;
+import net.sourceforge.zbar.SymbolSet;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
@@ -35,28 +27,24 @@ import cn.kkmofang.view.value.V;
 
 public class QRCaptureElement extends ViewElement {
 
-    protected final static int MSG_FRAME = 1;
+
+    static {
+        System.loadLibrary("iconv");
+        System.loadLibrary("zbarjni");
+    }
 
     public final static String TAG = "kk";
 
     public QRCaptureElement() {
         super();
-        _mainHandler = new Handler();
+
     }
 
+    private ImageScanner _scanner;
+    private Camera _camera;
     private SurfaceView _surfaceView;
     private SurfaceHolder.Callback _callback;
-    private CameraManager _cameraManager;
-    private HandlerThread _thread;
-    private Handler _handler;
-    private final Handler _mainHandler;
-
-    protected CameraManager cameraManager() {
-        if(_cameraManager == null) {
-            _cameraManager = new CameraManager(viewContext.getContext());
-        }
-        return _cameraManager;
-    }
+    private Camera.PreviewCallback _previewCallback;
 
     public void setView(View view) {
 
@@ -121,8 +109,9 @@ public class QRCaptureElement extends ViewElement {
         if("capture".equals(key)) {
 
             if(V.booleanValue(value,false)) {
-                if(_cameraManager != null && _cameraManager.isOpen() && _handler != null) {
-                    _cameraManager.requestPreviewFrame(_handler,MSG_FRAME);
+
+                if(_camera != null) {
+                    _camera.startPreview();
                 }
             }
 
@@ -131,18 +120,11 @@ public class QRCaptureElement extends ViewElement {
 
     protected void closeCamera() {
 
-        if(_thread != null) {
-            _thread.quit();
-            _thread = null;
-        }
 
-        if(_handler != null) {
-            _handler = null;
-        }
-
-        if(_cameraManager!=null && _cameraManager.isOpen()) {
-            _cameraManager.stopPreview();
-            _cameraManager.closeDriver();
+        if(_camera != null) {
+            _camera.setOneShotPreviewCallback(null);
+            _camera.release();
+            _camera = null;
         }
 
         if(_surfaceView != null && _callback != null) {
@@ -151,98 +133,88 @@ public class QRCaptureElement extends ViewElement {
 
     }
 
+    protected void onPreviewFrame(byte[] data, Camera camera) {
+
+        Camera.Parameters parameters = camera.getParameters();
+        Camera.Size size = parameters.getPreviewSize();
+
+        Image barcode = new Image(size.width, size.height, "Y800");
+        barcode.setData(data);
+
+        int result = _scanner.scanImage(barcode);
+
+        if (result != 0) {
+
+            camera.stopPreview();
+
+            SymbolSet syms = _scanner.getResults();
+
+            for (Symbol sym : syms) {
+                Element.Event event = new Element.Event(this);
+                Map<String,Object> v = this.data();
+                v.put("text",sym.getData());
+                event.setData(v);
+                emit("capture",event);
+                break;
+            }
+        } else {
+            camera.setOneShotPreviewCallback(_previewCallback);
+            camera.startPreview();
+        }
+
+    }
+
     protected void openCamera(SurfaceHolder holder) {
 
-        if(holder == null) {
-            return;
-        }
-
-        CameraManager camera = cameraManager();
-
-        if(! camera.isOpen()) {
-
+        if(_camera == null) {
             try {
-                camera.openDriver(holder);
-                camera.startPreview();
-            } catch (IOException e) {
+                _camera = Camera.open();
+            } catch(Throwable e) {
                 Log.d(TAG,Log.getStackTraceString(e));
-            } catch (RuntimeException e) {
-                Toast.makeText(viewContext.getContext(),e.getMessage(),Toast.LENGTH_SHORT);
             }
-
         }
 
-        if(_thread == null) {
-            _thread = new HandlerThread("QRCaptureElement");
-            _thread.start();
-        }
+        if(_camera != null) {
 
-        if(_handler == null) {
+            if(_previewCallback == null) {
 
-            final WeakReference<QRCaptureElement> e = new WeakReference<>(this);
+                final  WeakReference<QRCaptureElement> e = new WeakReference<>(this);
+                _previewCallback = new Camera.PreviewCallback() {
+                    @Override
+                    public void onPreviewFrame(byte[] data, Camera camera) {
 
-            _handler = new Handler(_thread.getLooper(),new Handler.Callback(){
-                @Override
-                public boolean handleMessage(Message msg) {
 
-                    if(msg.what == MSG_FRAME) {
                         QRCaptureElement element = e.get();
+
                         if(element != null) {
-                            element.decode((byte[])msg.obj, msg.arg1, msg.arg2);
+                            element.onPreviewFrame(data,camera);
                         }
-                        return true;
+
                     }
-                    return false;
-                }
-            });
-        }
-
-        if(V.booleanValue(get("capture"),false)) {
-            camera.requestPreviewFrame(_handler,MSG_FRAME);
-        }
-
-    }
-
-    private final QRCodeReader _qrReader = new QRCodeReader();
-
-    private void decode(byte[] data, int width, int height) {
-
-        Result rawResult = null;
-        PlanarYUVLuminanceSource source =  cameraManager().buildLuminanceSource(data, width, height);
-        if(source != null) {
-            BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
-            try {
-                rawResult = _qrReader.decode(bitmap);
-            } catch (ReaderException e) {
-            } finally {
-                _qrReader.reset();
+                };
             }
+
+            _camera.setOneShotPreviewCallback(_previewCallback);
+
+            _camera.setDisplayOrientation(90);
+
+            try {
+                _camera.setPreviewDisplay(holder);
+            } catch (IOException ex) {
+                Log.d(TAG,Log.getStackTraceString(ex));
+            }
+
+            _camera.startPreview();
+
         }
 
-        if(rawResult != null) {
-            final String text = rawResult.getText();
-            _mainHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    set("capture","false");
-                    Element.Event event = new Element.Event(QRCaptureElement.this);
-                    Map<String,Object> data = data();
-                    data.put("text",text);
-                    event.setData(data);
-                    emit("capture",event);
-                }
-            });
-        } else {
-            _mainHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    if(_cameraManager != null && _handler != null) {
-                        _cameraManager.requestPreviewFrame(_handler,MSG_FRAME);
-                    }
-                }
-            });
+        if(_scanner == null) {
+            _scanner = new ImageScanner();
+            _scanner.setConfig(0, Config.X_DENSITY, 3);
+            _scanner.setConfig(0, Config.Y_DENSITY, 3);
         }
     }
+
 
     public void onPause(Activity activity) {
 
