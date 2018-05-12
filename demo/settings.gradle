@@ -1,1 +1,1 @@
-include ':app', ':kk-qrcode'
+include ':app', ':kk-qrcode', ':kk-view', ':kk-image'

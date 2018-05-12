@@ -2,7 +2,11 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/app/app.iml" filepath="$PROJECT_DIR$/app/app.iml" />
       <module fileurl="file://$PROJECT_DIR$/demo.iml" filepath="$PROJECT_DIR$/demo.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../kk-image/kk-image/kk-image.iml" filepath="$PROJECT_DIR$/../../kk-image/kk-image/kk-image.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../kk-qrcode/kk-qrcode.iml" filepath="$PROJECT_DIR$/../kk-qrcode/kk-qrcode.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../kk-view/kk-view/kk-view.iml" filepath="$PROJECT_DIR$/../../kk-view/kk-view/kk-view.iml" />
     </modules>
   </component>
 </project>
