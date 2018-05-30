@@ -169,6 +169,13 @@ public class QRCaptureElement extends ViewElement {
         if(_camera == null) {
             try {
                 _camera = Camera.open();
+                _camera.autoFocus(new Camera.AutoFocusCallback() {
+                    @Override
+                    public void onAutoFocus(boolean b, Camera camera) {
+
+                    }
+                });
+
             } catch(Throwable e) {
                 Log.d(TAG,Log.getStackTraceString(e));
             }
