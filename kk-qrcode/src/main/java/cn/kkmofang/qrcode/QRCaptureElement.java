@@ -7,14 +7,17 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 
-import net.sourceforge.zbar.Config;
-import net.sourceforge.zbar.Image;
-import net.sourceforge.zbar.ImageScanner;
-import net.sourceforge.zbar.Symbol;
-import net.sourceforge.zbar.SymbolSet;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.MultiFormatReader;
+import com.google.zxing.PlanarYUVLuminanceSource;
+import com.google.zxing.ReaderException;
+import com.google.zxing.Result;
+import com.google.zxing.common.HybridBinarizer;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.util.HashMap;
 import java.util.Map;
 
 import cn.kkmofang.view.Element;
@@ -27,12 +30,6 @@ import cn.kkmofang.view.value.V;
 
 public class QRCaptureElement extends ViewElement {
 
-
-    static {
-        System.loadLibrary("iconv");
-        System.loadLibrary("zbarjni");
-    }
-
     public final static String TAG = "kk";
 
     public QRCaptureElement() {
@@ -40,7 +37,6 @@ public class QRCaptureElement extends ViewElement {
 
     }
 
-    private ImageScanner _scanner;
     private Camera _camera;
     private SurfaceView _surfaceView;
     private SurfaceHolder.Callback _callback;
@@ -138,26 +134,40 @@ public class QRCaptureElement extends ViewElement {
         Camera.Parameters parameters = camera.getParameters();
         Camera.Size size = parameters.getPreviewSize();
 
-        Image barcode = new Image(size.width, size.height, "Y800");
-        barcode.setData(data);
+        Result rawResult = null;
+        int height = size.height;
+        int width = size.width;
 
-        int result = _scanner.scanImage(barcode);
+        byte[] rotatedData = new byte[data.length];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++)
+                rotatedData[x * height + height - y - 1] = data[x + y * width];
+        }
+        int tmp = width;
+        width = height;
+        height = tmp;
 
-        if (result != 0) {
+        PlanarYUVLuminanceSource source = new PlanarYUVLuminanceSource(rotatedData, width, height, 0, 0, width, height, false);
+        BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
+        MultiFormatReader multiFormatReader = new MultiFormatReader();
+        Map<DecodeHintType, Object> hints = new HashMap<>();
+        hints.put(DecodeHintType.CHARACTER_SET, "UTF-8");
+        multiFormatReader.setHints(hints);
+        try {
+            rawResult = multiFormatReader.decodeWithState(bitmap);
+        } catch (ReaderException re) {
+            re.printStackTrace();
+        } finally {
+            multiFormatReader.reset();
+        }
 
-            camera.stopPreview();
-
-            SymbolSet syms = _scanner.getResults();
-
-            for (Symbol sym : syms) {
-                Element.Event event = new Element.Event(this);
-                Map<String,Object> v = this.data();
-                v.put("text",sym.getData());
-                event.setData(v);
-                emit("capture",event);
-                break;
-            }
-        } else {
+        if (rawResult != null){
+            Element.Event event = new Element.Event(this);
+            Map<String,Object> v = this.data();
+            v.put("text",rawResult.getText());
+            event.setData(v);
+            emit("capture",event);
+        }else {
             camera.setOneShotPreviewCallback(_previewCallback);
             camera.startPreview();
         }
@@ -169,12 +179,12 @@ public class QRCaptureElement extends ViewElement {
         if(_camera == null) {
             try {
                 _camera = Camera.open();
-                _camera.autoFocus(new Camera.AutoFocusCallback() {
-                    @Override
-                    public void onAutoFocus(boolean b, Camera camera) {
-
-                    }
-                });
+                if (_camera == null){
+                    throw new IOException();
+                }
+                Camera.Parameters _parameters = _camera.getParameters();
+                _parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
+                _camera.setParameters(_parameters);
 
             } catch(Throwable e) {
                 Log.d(TAG,Log.getStackTraceString(e));
@@ -212,13 +222,8 @@ public class QRCaptureElement extends ViewElement {
             }
 
             _camera.startPreview();
+            _camera.cancelAutoFocus();
 
-        }
-
-        if(_scanner == null) {
-            _scanner = new ImageScanner();
-            _scanner.setConfig(0, Config.X_DENSITY, 3);
-            _scanner.setConfig(0, Config.Y_DENSITY, 3);
         }
     }
 
