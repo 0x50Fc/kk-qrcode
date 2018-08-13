@@ -1,11 +1,15 @@
 package cn.kkmofang.qrcode;
 import android.app.Activity;
+import android.content.Context;
 import android.hardware.Camera;
+import android.os.Handler;
 import android.util.Log;
+import android.view.Display;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 
 import com.google.zxing.BinaryBitmap;
 import com.google.zxing.DecodeHintType;
@@ -17,7 +21,10 @@ import com.google.zxing.common.HybridBinarizer;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.security.Policy;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 
 import cn.kkmofang.view.Element;
@@ -78,17 +85,35 @@ public class QRCaptureElement extends ViewElement {
 
                         if(element != null) {
                             element.openCamera(holder);
+                            element.initCamera(holder);
                         }
                     }
 
                     @Override
                     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-
+                        QRCaptureElement element = e.get();
+                        if (element != null){
+                            if (element._camera != null){
+                                element._camera.autoFocus(new Camera.AutoFocusCallback() {
+                                    @Override
+                                    public void onAutoFocus(boolean success, Camera camera) {
+                                        QRCaptureElement el = e.get();
+                                        if (success && el != null){
+                                            el.initCamera(el._surfaceView.getHolder());
+                                            camera.cancelAutoFocus();
+                                        }
+                                    }
+                                });
+                            }
+                        }
                     }
 
                     @Override
                     public void surfaceDestroyed(SurfaceHolder holder) {
-
+                        QRCaptureElement element = e.get();
+                        if (element != null){
+                            element.closeCamera();
+                        }
 
                     }
                 };
@@ -119,6 +144,7 @@ public class QRCaptureElement extends ViewElement {
 
         if(_camera != null) {
             _camera.setOneShotPreviewCallback(null);
+            _camera.stopPreview();
             _camera.release();
             _camera = null;
         }
@@ -152,9 +178,11 @@ public class QRCaptureElement extends ViewElement {
         MultiFormatReader multiFormatReader = new MultiFormatReader();
         Map<DecodeHintType, Object> hints = new HashMap<>();
         hints.put(DecodeHintType.CHARACTER_SET, "UTF-8");
+        hints.put(DecodeHintType.TRY_HARDER, Boolean.TRUE);
+        hints.put(DecodeHintType.PURE_BARCODE, Boolean.TRUE);
         multiFormatReader.setHints(hints);
         try {
-            rawResult = multiFormatReader.decodeWithState(bitmap);
+            rawResult = multiFormatReader.decode(bitmap);
         } catch (ReaderException re) {
             re.printStackTrace();
         } finally {
@@ -182,15 +210,15 @@ public class QRCaptureElement extends ViewElement {
                 if (_camera == null){
                     throw new IOException();
                 }
-                Camera.Parameters _parameters = _camera.getParameters();
-                _parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
-                _camera.setParameters(_parameters);
 
             } catch(Throwable e) {
                 Log.d(TAG,Log.getStackTraceString(e));
             }
         }
 
+    }
+
+    private void initCamera(SurfaceHolder holder){
         if(_camera != null) {
 
             if(_previewCallback == null) {
@@ -210,20 +238,15 @@ public class QRCaptureElement extends ViewElement {
                     }
                 };
             }
-
-            _camera.setOneShotPreviewCallback(_previewCallback);
-
             _camera.setDisplayOrientation(90);
-
+            _camera.setOneShotPreviewCallback(_previewCallback);
             try {
                 _camera.setPreviewDisplay(holder);
-            } catch (IOException ex) {
-                Log.d(TAG,Log.getStackTraceString(ex));
+            } catch (IOException e) {
+                e.printStackTrace();
             }
-
             _camera.startPreview();
             _camera.cancelAutoFocus();
-
         }
     }
 
@@ -240,6 +263,8 @@ public class QRCaptureElement extends ViewElement {
 
         if(_surfaceView != null && _callback != null) {
             _surfaceView.getHolder().addCallback(_callback);
+            openCamera(_surfaceView.getHolder());
+            initCamera(_surfaceView.getHolder());
         }
 
     }
